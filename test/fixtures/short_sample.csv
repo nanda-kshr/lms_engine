@@ -1,0 +1,4 @@
+Question,Key Points,CO1,CO2,CO3,CO4,CO5,LO Mapping,Difficulty,Marks
+Write a short note on Stack data structure.,LIFO principle;Push operation;Pop operation;Applications,1,2,0,0,0,LO1,Easy,5
+Briefly explain Breadth First Search.,Level order traversal;Queue usage;Applications,2,1,0,0,0,LO2,Medium,5
+Write a short note on Deadlock.,Definition;Necessary conditions;Prevention methods,2,2,1,0,0,"LO2,LO3",Hard,6

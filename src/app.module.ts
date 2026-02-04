@@ -6,6 +6,8 @@ import { AppService } from './app.service';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './auth/auth.module';
+import { LlmModule } from './llm';
+import { QuestionsModule } from './questions';
 import { RolesSeedService } from './database/seeds/roles.seed';
 import { Role, RoleSchema } from './schemas/role.schema';
 
@@ -15,6 +17,8 @@ import { Role, RoleSchema } from './schemas/role.schema';
     DatabaseModule,
     HealthModule,
     AuthModule,
+    LlmModule.forRoot(),
+    QuestionsModule,
     MongooseModule.forFeature([{ name: Role.name, schema: RoleSchema }]),
   ],
   controllers: [AppController],

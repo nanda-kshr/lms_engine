@@ -1,0 +1,4 @@
+question,option_a,option_b,option_c,option_d,option_correct,CO,LO mapping,difficulty,marks
+What is the time complexity of binary search in a sorted array?,O(n),O(log n),O(n log n),O(1),B,CO1,LO1,Easy,2
+Which data structure is most suitable for implementing recursion?,Queue,Heap,Stack,LinkedList,C,CO2,LO1,Medium,3
+In a graph with no cycles which traversal guarantees visiting parent before children?,DFS,BFS,TopologicalSort,Dijkstra,C,CO3,LO2,Hard,5
