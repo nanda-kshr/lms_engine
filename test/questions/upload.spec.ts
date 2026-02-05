@@ -1,12 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { Types } from 'mongoose';
 import { CsvParserService } from '../../src/questions/services/csv-parser.service';
 import { TemplateDetectorService } from '../../src/questions/services/template-detector.service';
 import { HeaderValidatorService } from '../../src/questions/services/header-validator.service';
 import { RowValidatorService } from '../../src/questions/services/row-validator.service';
-import { NormalizerService } from '../../src/questions/services/normalizer.service';
+import { NormalizerService, UploadContext } from '../../src/questions/services/normalizer.service';
 import { CsvTemplateType } from '../../src/questions/templates/csv-templates';
+import { VettingStatus } from '../../src/schemas/question.schema';
 
 describe('Question Upload Pipeline', () => {
     let csvParser: CsvParserService;
@@ -14,6 +16,12 @@ describe('Question Upload Pipeline', () => {
     let headerValidator: HeaderValidatorService;
     let rowValidator: RowValidatorService;
     let normalizer: NormalizerService;
+
+    const mockUploadContext: UploadContext = {
+        upload_id: 'test-upload-id-123',
+        uploaded_by: new Types.ObjectId().toHexString(),
+        uploaded_at: new Date('2026-02-04T12:00:00Z'),
+    };
 
     beforeEach(async () => {
         const module: TestingModule = await Test.createTestingModule({
@@ -31,6 +39,49 @@ describe('Question Upload Pipeline', () => {
         headerValidator = module.get<HeaderValidatorService>(HeaderValidatorService);
         rowValidator = module.get<RowValidatorService>(RowValidatorService);
         normalizer = module.get<NormalizerService>(NormalizerService);
+    });
+
+    describe('Upload ID Assignment', () => {
+        it('should assign upload_id to all normalized questions', () => {
+            const buffer = readFileSync(join(__dirname, '../fixtures/mcq_sample.csv'));
+            const { rows } = csvParser.parse(buffer);
+            const normalized = normalizer.normalize(rows, CsvTemplateType.MCQ, mockUploadContext);
+
+            expect(normalized.length).toBeGreaterThan(0);
+            normalized.forEach((q) => {
+                expect(q.upload_id).toBe(mockUploadContext.upload_id);
+            });
+        });
+
+        it('should assign uploaded_by to all normalized questions', () => {
+            const buffer = readFileSync(join(__dirname, '../fixtures/mcq_sample.csv'));
+            const { rows } = csvParser.parse(buffer);
+            const normalized = normalizer.normalize(rows, CsvTemplateType.MCQ, mockUploadContext);
+
+            normalized.forEach((q) => {
+                expect(q.uploaded_by.toHexString()).toBe(mockUploadContext.uploaded_by);
+            });
+        });
+
+        it('should assign uploaded_at to all normalized questions', () => {
+            const buffer = readFileSync(join(__dirname, '../fixtures/mcq_sample.csv'));
+            const { rows } = csvParser.parse(buffer);
+            const normalized = normalizer.normalize(rows, CsvTemplateType.MCQ, mockUploadContext);
+
+            normalized.forEach((q) => {
+                expect(q.uploaded_at).toEqual(mockUploadContext.uploaded_at);
+            });
+        });
+
+        it('should set vetting_status to pending by default', () => {
+            const buffer = readFileSync(join(__dirname, '../fixtures/mcq_sample.csv'));
+            const { rows } = csvParser.parse(buffer);
+            const normalized = normalizer.normalize(rows, CsvTemplateType.MCQ, mockUploadContext);
+
+            normalized.forEach((q) => {
+                expect(q.vetting_status).toBe(VettingStatus.PENDING);
+            });
+        });
     });
 
     describe('MCQ CSV', () => {
@@ -68,7 +119,7 @@ describe('Question Upload Pipeline', () => {
 
         it('should normalize MCQ rows', () => {
             const { rows } = csvParser.parse(buffer);
-            const normalized = normalizer.normalize(rows, CsvTemplateType.MCQ, 'test-batch');
+            const normalized = normalizer.normalize(rows, CsvTemplateType.MCQ, mockUploadContext);
             expect(normalized.length).toBe(3);
             expect(normalized[0].type).toBe('MCQ');
             expect(normalized[0].options).toBeDefined();
@@ -111,7 +162,7 @@ describe('Question Upload Pipeline', () => {
 
         it('should normalize Essay rows', () => {
             const { rows } = csvParser.parse(buffer);
-            const normalized = normalizer.normalize(rows, CsvTemplateType.ESSAY, 'test-batch');
+            const normalized = normalizer.normalize(rows, CsvTemplateType.ESSAY, mockUploadContext);
             expect(normalized.length).toBe(3);
             expect(normalized[0].type).toBe('ESSAY');
             expect(normalized[0].word_limit).toBe(500);
@@ -154,7 +205,7 @@ describe('Question Upload Pipeline', () => {
 
         it('should normalize Short Note rows', () => {
             const { rows } = csvParser.parse(buffer);
-            const normalized = normalizer.normalize(rows, CsvTemplateType.SHORT, 'test-batch');
+            const normalized = normalizer.normalize(rows, CsvTemplateType.SHORT, mockUploadContext);
             expect(normalized.length).toBe(3);
             expect(normalized[0].type).toBe('SHORT');
             expect(normalized[0].key_points?.length).toBeGreaterThan(0);

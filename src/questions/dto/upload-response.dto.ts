@@ -4,9 +4,10 @@ export class UploadErrorDto {
 }
 
 export class UploadResponseDto {
-    upload_batch_id: string;
+    upload_id: string;
     total_rows: number;
     accepted_rows: number;
     rejected_rows: number;
+    duplicate_warnings: number;
     errors: UploadErrorDto[];
 }

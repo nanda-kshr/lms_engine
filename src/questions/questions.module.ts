@@ -10,6 +10,7 @@ import { TemplateDetectorService } from './services/template-detector.service';
 import { HeaderValidatorService } from './services/header-validator.service';
 import { RowValidatorService } from './services/row-validator.service';
 import { NormalizerService } from './services/normalizer.service';
+import { DuplicateDetectorService } from './services/duplicate-detector.service';
 import { SemanticAnnotatorService } from './services/semantic-annotator.service';
 import { EmbeddingService } from './services/embedding.service';
 
@@ -31,6 +32,7 @@ import { EmbeddingService } from './services/embedding.service';
         HeaderValidatorService,
         RowValidatorService,
         NormalizerService,
+        DuplicateDetectorService,
         SemanticAnnotatorService,
         EmbeddingService,
     ],

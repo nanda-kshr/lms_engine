@@ -1,12 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+import { Types } from 'mongoose';
 import { CsvTemplateType } from '../templates/csv-templates';
 import {
     QuestionType,
     Difficulty,
     CoMap,
     McqOptions,
+    VettingStatus,
 } from '../../schemas/question.schema';
+
+export interface UploadContext {
+    upload_id: string;
+    uploaded_by: string;
+    uploaded_at: Date;
+}
 
 export interface NormalizedQuestion {
     type: QuestionType;
@@ -22,7 +29,18 @@ export interface NormalizedQuestion {
     difficulty: Difficulty;
     marks: number;
     source: string;
-    upload_batch_id: string;
+    // Optional course/topic
+    course_code?: string;
+    topic?: string;
+    // Upload metadata
+    upload_id: string;
+    uploaded_by: Types.ObjectId;
+    uploaded_at: Date;
+    vetting_status: VettingStatus;
+    // Duplicate fields - populated by DuplicateDetectorService
+    duplicate_warning?: boolean;
+    similar_question_id?: Types.ObjectId;
+    similarity_score?: number;
 }
 
 @Injectable()
@@ -30,17 +48,15 @@ export class NormalizerService {
     normalize(
         rows: Record<string, string>[],
         templateType: CsvTemplateType,
-        batchId?: string,
+        context: UploadContext,
     ): NormalizedQuestion[] {
-        const uploadBatchId = batchId || uuidv4();
-
-        return rows.map((row) => this.normalizeRow(row, templateType, uploadBatchId));
+        return rows.map((row) => this.normalizeRow(row, templateType, context));
     }
 
     private normalizeRow(
         row: Record<string, string>,
         templateType: CsvTemplateType,
-        uploadBatchId: string,
+        context: UploadContext,
     ): NormalizedQuestion {
         const base: NormalizedQuestion = {
             type: this.mapType(templateType),
@@ -50,7 +66,13 @@ export class NormalizerService {
             difficulty: row['difficulty'].trim() as Difficulty,
             marks: parseFloat(row['marks']),
             source: 'CSV',
-            upload_batch_id: uploadBatchId,
+            // Optional course/topic from CSV (if provided)
+            course_code: row['course_code']?.trim() || undefined,
+            topic: row['topic']?.trim() || undefined,
+            upload_id: context.upload_id,
+            uploaded_by: new Types.ObjectId(context.uploaded_by),
+            uploaded_at: context.uploaded_at,
+            vetting_status: VettingStatus.PENDING,
         };
 
         switch (templateType) {
@@ -94,7 +116,6 @@ export class NormalizerService {
 
     private parseCoMap(row: Record<string, string>, templateType: CsvTemplateType): CoMap {
         if (templateType === CsvTemplateType.MCQ) {
-            // MCQ has single CO column like "CO1" or "CO2"
             const co = row['co']?.trim() || '';
             const coNumber = parseInt(co.replace(/\D/g, ''), 10) || 1;
             const coMap: CoMap = { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 };
@@ -103,7 +124,6 @@ export class NormalizerService {
             return coMap;
         }
 
-        // Essay/Short have CO1-CO5 columns
         return {
             CO1: parseFloat(row['co1']) || 0,
             CO2: parseFloat(row['co2']) || 0,
@@ -123,7 +143,6 @@ export class NormalizerService {
 
     private parseList(value: string): string[] {
         if (!value) return [];
-        // Support semicolon separated (primary format in samples)
         return value
             .split(';')
             .map((item) => item.trim())

@@ -9,7 +9,10 @@ import { AuthModule } from './auth/auth.module';
 import { LlmModule } from './llm';
 import { QuestionsModule } from './questions';
 import { RolesSeedService } from './database/seeds/roles.seed';
+import { CoursesSeedService } from './database/seeds/courses.seed';
 import { Role, RoleSchema } from './schemas/role.schema';
+import { Course, CourseSchema } from './schemas/course.schema';
+import { Topic, TopicSchema } from './schemas/topic.schema';
 
 @Module({
   imports: [
@@ -19,9 +22,13 @@ import { Role, RoleSchema } from './schemas/role.schema';
     AuthModule,
     LlmModule.forRoot(),
     QuestionsModule,
-    MongooseModule.forFeature([{ name: Role.name, schema: RoleSchema }]),
+    MongooseModule.forFeature([
+      { name: Role.name, schema: RoleSchema },
+      { name: Course.name, schema: CourseSchema },
+      { name: Topic.name, schema: TopicSchema },
+    ]),
   ],
   controllers: [AppController],
-  providers: [AppService, RolesSeedService],
+  providers: [AppService, RolesSeedService, CoursesSeedService],
 })
 export class AppModule { }

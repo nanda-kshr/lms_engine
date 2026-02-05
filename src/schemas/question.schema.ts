@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 export type QuestionDocument = Question & Document;
 
@@ -13,6 +13,12 @@ export enum Difficulty {
     EASY = 'Easy',
     MEDIUM = 'Medium',
     HARD = 'Hard',
+}
+
+export enum VettingStatus {
+    PENDING = 'pending',
+    APPROVED = 'approved',
+    REJECTED = 'rejected',
 }
 
 export class McqOptions {
@@ -101,8 +107,42 @@ export class Question {
     @Prop({ default: 'CSV' })
     source: string;
 
+    // Optional course/topic scoping (nullable, no enforcement)
+    @Prop()
+    course_code?: string;
+
+    @Prop()
+    topic?: string;
+
+    // Upload metadata
     @Prop({ required: true })
-    upload_batch_id: string;
+    upload_id: string;
+
+    @Prop({ required: true, type: Types.ObjectId, ref: 'User' })
+    uploaded_by: Types.ObjectId;
+
+    @Prop({ required: true })
+    uploaded_at: Date;
+
+    // Duplicate detection (warn only - still inserts)
+    @Prop({ default: false })
+    duplicate_warning: boolean;
+
+    @Prop({ type: Types.ObjectId, ref: 'Question' })
+    similar_question_id?: Types.ObjectId;
+
+    @Prop({ min: 0, max: 1 })
+    similarity_score?: number;
+
+    // Vetting
+    @Prop({ default: VettingStatus.PENDING, enum: VettingStatus })
+    vetting_status: VettingStatus;
+
+    @Prop({ type: Types.ObjectId, ref: 'User' })
+    vetted_by?: Types.ObjectId;
+
+    @Prop()
+    vetted_at?: Date;
 
     // Async-populated: Semantic annotation
     @Prop({ type: SemanticAnnotation })
@@ -117,3 +157,6 @@ export class Question {
 }
 
 export const QuestionSchema = SchemaFactory.createForClass(Question);
+
+// Index for duplicate detection queries
+QuestionSchema.index({ embedding: 1 });

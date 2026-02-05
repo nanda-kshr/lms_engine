@@ -36,6 +36,28 @@ export class EmbeddingService {
         }
     }
 
+    /**
+     * Generate embedding synchronously for a single text (used for duplicate detection)
+     */
+    async generateEmbeddingSync(text: string): Promise<number[] | null> {
+        if (!this.client) {
+            this.logger.warn('Embedding client not initialized');
+            return null;
+        }
+
+        try {
+            const response = await this.client.models.embedContent({
+                model: EMBEDDING_MODEL,
+                contents: [{ parts: [{ text }] }],
+            });
+
+            return response.embeddings?.[0]?.values ?? null;
+        } catch (error) {
+            this.logger.warn(`Embedding generation failed: ${error.message}`);
+            return null;
+        }
+    }
+
     private async processBatch(questionIds: string[]): Promise<void> {
         try {
             const questions = await this.questionModel

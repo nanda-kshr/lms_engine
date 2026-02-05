@@ -5,11 +5,13 @@ import {
     UseInterceptors,
     UploadedFile,
     BadRequestException,
+    Req,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
+import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { MinRoleLevel } from '../auth/decorators/min-role-level.decorator';
@@ -19,9 +21,14 @@ import { TemplateDetectorService } from './services/template-detector.service';
 import { HeaderValidatorService } from './services/header-validator.service';
 import { RowValidatorService } from './services/row-validator.service';
 import { NormalizerService } from './services/normalizer.service';
+import { DuplicateDetectorService } from './services/duplicate-detector.service';
 import { SemanticAnnotatorService } from './services/semantic-annotator.service';
 import { EmbeddingService } from './services/embedding.service';
 import { UploadResponseDto } from './dto/upload-response.dto';
+
+interface AuthenticatedRequest extends Request {
+    user: { userId: string; roleId: string };
+}
 
 @Controller('questions')
 export class QuestionsController {
@@ -33,6 +40,7 @@ export class QuestionsController {
         private readonly headerValidator: HeaderValidatorService,
         private readonly rowValidator: RowValidatorService,
         private readonly normalizer: NormalizerService,
+        private readonly duplicateDetector: DuplicateDetectorService,
         private readonly semanticAnnotator: SemanticAnnotatorService,
         private readonly embeddingService: EmbeddingService,
     ) { }
@@ -43,6 +51,7 @@ export class QuestionsController {
     @UseInterceptors(FileInterceptor('file'))
     async uploadQuestions(
         @UploadedFile() file: Express.Multer.File,
+        @Req() req: AuthenticatedRequest,
     ): Promise<UploadResponseDto> {
         // Validate file exists
         if (!file) {
@@ -66,32 +75,48 @@ export class QuestionsController {
         // Step 4: Validate rows (partial success)
         const { valid, errors } = this.rowValidator.validate(rows, templateType);
 
-        // Step 5: Normalize valid rows
-        const batchId = uuidv4();
+        // Step 5: Normalize valid rows with upload context
+        const uploadContext = {
+            upload_id: uuidv4(),
+            uploaded_by: req.user.userId,
+            uploaded_at: new Date(),
+        };
         const normalizedQuestions = this.normalizer.normalize(
             valid,
             templateType,
-            batchId,
+            uploadContext,
         );
 
-        // Step 6: Insert to MongoDB
+        // Step 6: Check for duplicates (warn only - still inserts)
+        const questionsWithDuplicateFlags = await this.duplicateDetector.checkDuplicates(
+            normalizedQuestions,
+        );
+
+        // Step 7: Insert to MongoDB
         let insertedIds: string[] = [];
-        if (normalizedQuestions.length > 0) {
-            const inserted = await this.questionModel.insertMany(normalizedQuestions);
+        if (questionsWithDuplicateFlags.length > 0) {
+            const toInsert = questionsWithDuplicateFlags.map((r) => r.question);
+            const inserted = await this.questionModel.insertMany(toInsert);
             insertedIds = inserted.map((doc) => doc._id.toString());
         }
 
-        // Step 7: Trigger async jobs (non-blocking)
+        // Step 8: Trigger async jobs (non-blocking)
         if (insertedIds.length > 0) {
             this.triggerAsyncJobs(insertedIds);
         }
 
-        // Step 8: Return response
+        // Count duplicates for response
+        const duplicateCount = questionsWithDuplicateFlags.filter(
+            (r) => r.duplicate_warning,
+        ).length;
+
+        // Step 9: Return response
         return {
-            upload_batch_id: batchId,
+            upload_id: uploadContext.upload_id,
             total_rows: rows.length,
             accepted_rows: valid.length,
             rejected_rows: errors.length,
+            duplicate_warnings: duplicateCount,
             errors,
         };
     }
