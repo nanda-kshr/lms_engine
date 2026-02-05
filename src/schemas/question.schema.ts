@@ -107,7 +107,7 @@ export class Question {
     @Prop({ default: 'CSV' })
     source: string;
 
-    // Optional course/topic scoping (nullable, no enforcement)
+    // Optional course/topic scoping (not mandatory)
     @Prop()
     course_code?: string;
 

@@ -21,6 +21,7 @@ import { TemplateDetectorService } from './services/template-detector.service';
 import { HeaderValidatorService } from './services/header-validator.service';
 import { RowValidatorService } from './services/row-validator.service';
 import { NormalizerService } from './services/normalizer.service';
+import { CourseValidatorService } from './services/course-validator.service';
 import { DuplicateDetectorService } from './services/duplicate-detector.service';
 import { SemanticAnnotatorService } from './services/semantic-annotator.service';
 import { EmbeddingService } from './services/embedding.service';
@@ -40,6 +41,7 @@ export class QuestionsController {
         private readonly headerValidator: HeaderValidatorService,
         private readonly rowValidator: RowValidatorService,
         private readonly normalizer: NormalizerService,
+        private readonly courseValidator: CourseValidatorService,
         private readonly duplicateDetector: DuplicateDetectorService,
         private readonly semanticAnnotator: SemanticAnnotatorService,
         private readonly embeddingService: EmbeddingService,
@@ -73,7 +75,10 @@ export class QuestionsController {
         this.headerValidator.validate(headers, templateType);
 
         // Step 4: Validate rows (partial success)
-        const { valid, errors } = this.rowValidator.validate(rows, templateType);
+        const { valid: validRows, errors: rowErrors } = this.rowValidator.validate(
+            rows,
+            templateType,
+        );
 
         // Step 5: Normalize valid rows with upload context
         const uploadContext = {
@@ -82,17 +87,23 @@ export class QuestionsController {
             uploaded_at: new Date(),
         };
         const normalizedQuestions = this.normalizer.normalize(
-            valid,
+            validRows,
             templateType,
             uploadContext,
         );
 
-        // Step 6: Check for duplicates (warn only - still inserts)
-        const questionsWithDuplicateFlags = await this.duplicateDetector.checkDuplicates(
-            normalizedQuestions,
-        );
+        // Step 6: Validate course/topic if provided (guarded - optional)
+        const { valid: courseValidQuestions, errors: courseErrors } =
+            await this.courseValidator.validate(normalizedQuestions, 2);
 
-        // Step 7: Insert to MongoDB
+        // Merge all errors
+        const allErrors = [...rowErrors, ...courseErrors];
+
+        // Step 7: Check for duplicates (warn only - still inserts)
+        const questionsWithDuplicateFlags =
+            await this.duplicateDetector.checkDuplicates(courseValidQuestions);
+
+        // Step 8: Insert to MongoDB
         let insertedIds: string[] = [];
         if (questionsWithDuplicateFlags.length > 0) {
             const toInsert = questionsWithDuplicateFlags.map((r) => r.question);
@@ -100,7 +111,7 @@ export class QuestionsController {
             insertedIds = inserted.map((doc) => doc._id.toString());
         }
 
-        // Step 8: Trigger async jobs (non-blocking)
+        // Step 9: Trigger async jobs (non-blocking)
         if (insertedIds.length > 0) {
             this.triggerAsyncJobs(insertedIds);
         }
@@ -110,14 +121,14 @@ export class QuestionsController {
             (r) => r.duplicate_warning,
         ).length;
 
-        // Step 9: Return response
+        // Step 10: Return response
         return {
             upload_id: uploadContext.upload_id,
             total_rows: rows.length,
-            accepted_rows: valid.length,
-            rejected_rows: errors.length,
+            accepted_rows: questionsWithDuplicateFlags.length,
+            rejected_rows: allErrors.length,
             duplicate_warnings: duplicateCount,
-            errors,
+            errors: allErrors,
         };
     }
 

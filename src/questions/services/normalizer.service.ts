@@ -29,10 +29,9 @@ export interface NormalizedQuestion {
     difficulty: Difficulty;
     marks: number;
     source: string;
-    // Optional course/topic
+    // Optional course/topic scoping
     course_code?: string;
     topic?: string;
-    // Upload metadata
     upload_id: string;
     uploaded_by: Types.ObjectId;
     uploaded_at: Date;
@@ -58,6 +57,9 @@ export class NormalizerService {
         templateType: CsvTemplateType,
         context: UploadContext,
     ): NormalizedQuestion {
+        const courseCode = row['course_code']?.trim() || undefined;
+        const topic = row['topic']?.trim() || undefined;
+
         const base: NormalizedQuestion = {
             type: this.mapType(templateType),
             question_text: row['question'].trim(),
@@ -66,9 +68,8 @@ export class NormalizerService {
             difficulty: row['difficulty'].trim() as Difficulty,
             marks: parseFloat(row['marks']),
             source: 'CSV',
-            // Optional course/topic from CSV (if provided)
-            course_code: row['course_code']?.trim() || undefined,
-            topic: row['topic']?.trim() || undefined,
+            ...(courseCode && { course_code: courseCode }),
+            ...(topic && { topic }),
             upload_id: context.upload_id,
             uploaded_by: new Types.ObjectId(context.uploaded_by),
             uploaded_at: context.uploaded_at,

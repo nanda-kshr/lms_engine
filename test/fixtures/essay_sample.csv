@@ -1,4 +1,4 @@
-Question,Expected Points,CO1,CO2,CO3,CO4,CO5,LO Mapping,Difficulty,Marks,Word Limit
-Explain the concept of recursion with examples.,Definition;Base case;Recursive case;Example walkthrough,3,2,1,0,0,"LO1,LO2",Hard,10,500
-Describe the working of quick sort algorithm.,Divide and conquer idea;Pivot selection;Partitioning;Time complexity,2,2,1,0,0,LO2,Medium,8,400
-Discuss advantages and disadvantages of linked lists.,Dynamic size;Insertion;Memory overhead;Traversal cost,2,1,1,0,0,LO1,Easy,6,300
+Question,Expected Points,CO1,CO2,CO3,CO4,CO5,LO Mapping,Difficulty,Marks,Word Limit,course_code,topic
+Explain the concept of recursion with examples.,Definition;Base case;Recursive case;Example walkthrough,3,2,1,0,0,"LO1,LO2",Hard,10,500,DSA,Recursion and Backtracking
+Describe the working of quick sort algorithm.,Divide and conquer idea;Pivot selection;Partitioning;Time complexity,2,2,1,0,0,LO2,Medium,8,400,DAA,Divide and Conquer
+Discuss advantages and disadvantages of linked lists.,Dynamic size;Insertion;Memory overhead;Traversal cost,2,1,1,0,0,LO1,Easy,6,300,DSA,Linked Lists
