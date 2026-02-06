@@ -23,11 +23,12 @@ describe('DuplicateDetectorService', () => {
             expect(similarity).toBeCloseTo(0.0, 5);
         });
 
-        it('should return -1 for opposite vectors', () => {
+        it('should return 0 for opposite vectors (clamped)', () => {
             const a = [1, 0, 0];
             const b = [-1, 0, 0];
             const similarity = (service as any).cosineSimilarity(a, b);
-            expect(similarity).toBeCloseTo(-1.0, 5);
+            // Clamped to [0, 1] range for duplicate detection
+            expect(similarity).toBeCloseTo(0.0, 5);
         });
 
         it('should handle normalized vectors correctly', () => {

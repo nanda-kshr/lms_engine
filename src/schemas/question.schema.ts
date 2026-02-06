@@ -21,6 +21,12 @@ export enum VettingStatus {
     REJECTED = 'rejected',
 }
 
+export enum VettingAction {
+    ACCEPT = 'accept',
+    REJECT = 'reject',
+    SKIP = 'skip',
+}
+
 export class McqOptions {
     @Prop({ required: true })
     a: string;
@@ -61,6 +67,21 @@ export class SemanticAnnotation {
 
     @Prop({ min: 0 })
     reasoning_steps: number;
+}
+
+@Schema()
+export class VettingLog {
+    @Prop({ required: true, type: Types.ObjectId, ref: 'User' })
+    user_id: Types.ObjectId;
+
+    @Prop({ required: true, enum: VettingAction })
+    action: VettingAction;
+
+    @Prop()
+    reason?: string;
+
+    @Prop({ required: true, default: () => new Date() })
+    created_at: Date;
 }
 
 @Schema({ timestamps: true })
@@ -107,7 +128,7 @@ export class Question {
     @Prop({ default: 'CSV' })
     source: string;
 
-    // Optional course/topic scoping (not mandatory)
+    // Optional course/topic scoping
     @Prop()
     course_code?: string;
 
@@ -134,15 +155,25 @@ export class Question {
     @Prop({ min: 0, max: 1 })
     similarity_score?: number;
 
-    // Vetting
+    // Vetting - status is DERIVED after each vote
     @Prop({ default: VettingStatus.PENDING, enum: VettingStatus })
     vetting_status: VettingStatus;
 
-    @Prop({ type: Types.ObjectId, ref: 'User' })
-    vetted_by?: Types.ObjectId;
+    // Multi-user vetting fields
+    @Prop({ default: 1.0, min: 0.2, max: 2.0 })
+    weight: number;
 
-    @Prop()
-    vetted_at?: Date;
+    @Prop({ default: 0 })
+    accept_count: number;
+
+    @Prop({ default: 0 })
+    reject_count: number;
+
+    @Prop({ default: 0 })
+    skip_count: number;
+
+    @Prop({ type: [VettingLog], default: [] })
+    vetting_logs: VettingLog[];
 
     // Async-populated: Semantic annotation
     @Prop({ type: SemanticAnnotation })
@@ -160,3 +191,6 @@ export const QuestionSchema = SchemaFactory.createForClass(Question);
 
 // Index for duplicate detection queries
 QuestionSchema.index({ embedding: 1 });
+
+// Index for vetting queries
+QuestionSchema.index({ vetting_status: 1, course_code: 1, topic: 1 });

@@ -16,6 +16,7 @@ import { CourseValidatorService } from './services/course-validator.service';
 import { DuplicateDetectorService } from './services/duplicate-detector.service';
 import { SemanticAnnotatorService } from './services/semantic-annotator.service';
 import { EmbeddingService } from './services/embedding.service';
+import { VettingService } from './services/vetting.service';
 
 @Module({
     imports: [
@@ -41,6 +42,7 @@ import { EmbeddingService } from './services/embedding.service';
         DuplicateDetectorService,
         SemanticAnnotatorService,
         EmbeddingService,
+        VettingService,
     ],
     exports: [
         CsvParserService,

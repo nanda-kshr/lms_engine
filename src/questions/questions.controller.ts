@@ -1,6 +1,10 @@
 import {
     Controller,
     Post,
+    Get,
+    Param,
+    Body,
+    Query,
     UseGuards,
     UseInterceptors,
     UploadedFile,
@@ -15,7 +19,7 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { MinRoleLevel } from '../auth/decorators/min-role-level.decorator';
-import { Question, QuestionDocument } from '../schemas/question.schema';
+import { Question, QuestionDocument, VettingStatus } from '../schemas/question.schema';
 import { CsvParserService } from './services/csv-parser.service';
 import { TemplateDetectorService } from './services/template-detector.service';
 import { HeaderValidatorService } from './services/header-validator.service';
@@ -25,7 +29,9 @@ import { CourseValidatorService } from './services/course-validator.service';
 import { DuplicateDetectorService } from './services/duplicate-detector.service';
 import { SemanticAnnotatorService } from './services/semantic-annotator.service';
 import { EmbeddingService } from './services/embedding.service';
+import { VettingService } from './services/vetting.service';
 import { UploadResponseDto } from './dto/upload-response.dto';
+import { VetQuestionDto } from './dto/vet-question.dto';
 
 interface AuthenticatedRequest extends Request {
     user: { userId: string; roleId: string };
@@ -45,6 +51,7 @@ export class QuestionsController {
         private readonly duplicateDetector: DuplicateDetectorService,
         private readonly semanticAnnotator: SemanticAnnotatorService,
         private readonly embeddingService: EmbeddingService,
+        private readonly vettingService: VettingService,
     ) { }
 
     @Post('upload')
@@ -55,32 +62,23 @@ export class QuestionsController {
         @UploadedFile() file: Express.Multer.File,
         @Req() req: AuthenticatedRequest,
     ): Promise<UploadResponseDto> {
-        // Validate file exists
         if (!file) {
             throw new BadRequestException('No file uploaded');
         }
 
-        // Validate file type
         if (!file.originalname.toLowerCase().endsWith('.csv')) {
             throw new BadRequestException('Only CSV files are allowed');
         }
 
-        // Step 1: Parse CSV
         const { headers, rows } = this.csvParser.parse(file.buffer);
-
-        // Step 2: Detect template type
         const templateType = this.templateDetector.detect(headers);
-
-        // Step 3: Validate headers (throws on failure - entire upload fails)
         this.headerValidator.validate(headers, templateType);
 
-        // Step 4: Validate rows (partial success)
         const { valid: validRows, errors: rowErrors } = this.rowValidator.validate(
             rows,
             templateType,
         );
 
-        // Step 5: Normalize valid rows with upload context
         const uploadContext = {
             upload_id: uuidv4(),
             uploaded_by: req.user.userId,
@@ -92,18 +90,14 @@ export class QuestionsController {
             uploadContext,
         );
 
-        // Step 6: Validate course/topic if provided (guarded - optional)
         const { valid: courseValidQuestions, errors: courseErrors } =
             await this.courseValidator.validate(normalizedQuestions, 2);
 
-        // Merge all errors
         const allErrors = [...rowErrors, ...courseErrors];
 
-        // Step 7: Check for duplicates (warn only - still inserts)
         const questionsWithDuplicateFlags =
             await this.duplicateDetector.checkDuplicates(courseValidQuestions);
 
-        // Step 8: Insert to MongoDB
         let insertedIds: string[] = [];
         if (questionsWithDuplicateFlags.length > 0) {
             const toInsert = questionsWithDuplicateFlags.map((r) => r.question);
@@ -111,17 +105,14 @@ export class QuestionsController {
             insertedIds = inserted.map((doc) => doc._id.toString());
         }
 
-        // Step 9: Trigger async jobs (non-blocking)
         if (insertedIds.length > 0) {
             this.triggerAsyncJobs(insertedIds);
         }
 
-        // Count duplicates for response
         const duplicateCount = questionsWithDuplicateFlags.filter(
             (r) => r.duplicate_warning,
         ).length;
 
-        // Step 10: Return response
         return {
             upload_id: uploadContext.upload_id,
             total_rows: rows.length,
@@ -132,8 +123,57 @@ export class QuestionsController {
         };
     }
 
+    /**
+     * Get questions for vetting with optional filters
+     */
+    @Get('vetting')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @MinRoleLevel(2) // Teacher and above
+    async getQuestionsForVetting(
+        @Query('vetting_status') vettingStatus?: VettingStatus,
+        @Query('course_code') courseCode?: string,
+        @Query('topic') topic?: string,
+        @Query('duplicate_warning') duplicateWarning?: string,
+        @Query('limit') limit?: string,
+        @Query('skip') skip?: string,
+    ) {
+        const filters = {
+            vetting_status: vettingStatus,
+            course_code: courseCode,
+            topic,
+            duplicate_warning:
+                duplicateWarning === 'true'
+                    ? true
+                    : duplicateWarning === 'false'
+                        ? false
+                        : undefined,
+        };
+
+        return this.vettingService.getQuestionsForVetting(
+            filters,
+            parseInt(limit || '20', 10),
+            parseInt(skip || '0', 10),
+        );
+    }
+
+    /**
+     * Vet a question (accept/reject/skip)
+     */
+    @Post(':id/vet')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @MinRoleLevel(2) // Teacher and above
+    async vetQuestion(
+        @Param('id') id: string,
+        @Body() dto: VetQuestionDto,
+        @Req() req: AuthenticatedRequest,
+    ) {
+        if (!id || id.trim() === '') {
+            throw new BadRequestException('Question ID is required');
+        }
+        return this.vettingService.vet(id, req.user.userId, dto.action, dto.reason);
+    }
+
     private triggerAsyncJobs(questionIds: string[]): void {
-        // Fire and forget - don't await
         setImmediate(async () => {
             try {
                 await this.semanticAnnotator.annotateQuestions(questionIds);

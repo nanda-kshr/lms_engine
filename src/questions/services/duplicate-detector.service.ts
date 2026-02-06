@@ -117,6 +117,8 @@ export class DuplicateDetectorService {
         }
 
         const magnitude = Math.sqrt(magA) * Math.sqrt(magB);
-        return magnitude === 0 ? 0 : dot / magnitude;
+        const similarity = magnitude === 0 ? 0 : dot / magnitude;
+        // Clamp to [0, 1] to handle floating point precision
+        return Math.min(1, Math.max(0, similarity));
     }
 }

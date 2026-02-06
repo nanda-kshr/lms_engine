@@ -21,12 +21,17 @@ export class EmbeddingService {
         const apiKey = this.configService.get<string>('GEMINI_API_KEY');
         if (apiKey) {
             this.client = new GoogleGenAI({ apiKey });
+            this.logger.log('Embedding service initialized with Gemini API key');
+        } else {
+            this.logger.error('GEMINI_API_KEY not set - embeddings will NOT be generated');
         }
     }
 
     async generateEmbeddings(questionIds: string[]): Promise<void> {
+        this.logger.log(`Starting embedding generation for ${questionIds.length} questions`);
+
         if (!this.client) {
-            this.logger.warn('Embedding client not initialized - skipping');
+            this.logger.error('Embedding client not initialized - GEMINI_API_KEY missing?');
             return;
         }
 
@@ -34,6 +39,8 @@ export class EmbeddingService {
             const batchIds = questionIds.slice(i, i + BATCH_SIZE);
             await this.processBatch(batchIds);
         }
+
+        this.logger.log('Embedding generation complete');
     }
 
     /**
@@ -63,10 +70,15 @@ export class EmbeddingService {
             const questions = await this.questionModel
                 .find({
                     _id: { $in: questionIds },
-                    embedding: { $exists: false },
+                    $or: [
+                        { embedding: { $exists: false } },
+                        { embedding: { $size: 0 } },
+                    ],
                 })
                 .select('_id question_text')
                 .lean();
+
+            this.logger.log(`Found ${questions.length} questions needing embeddings`);
 
             if (questions.length === 0) return;
 
