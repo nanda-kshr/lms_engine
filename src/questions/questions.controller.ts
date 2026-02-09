@@ -10,16 +10,18 @@ import {
     UploadedFile,
     BadRequestException,
     Req,
+    Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { MinRoleLevel } from '../auth/decorators/min-role-level.decorator';
 import { Question, QuestionDocument, VettingStatus } from '../schemas/question.schema';
+import { CsvTemplateType, TEMPLATE_HEADERS } from './templates/csv-templates';
 import { CsvParserService } from './services/csv-parser.service';
 import { TemplateDetectorService } from './services/template-detector.service';
 import { HeaderValidatorService } from './services/header-validator.service';
