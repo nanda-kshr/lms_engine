@@ -145,7 +145,7 @@ export class AuthService {
             { userId: userId.toString(), roleId: roleId.toString() },
             {
                 secret: this.configService.get<string>('JWT_SECRET'),
-                expiresIn: '15m',
+                expiresIn: '7h',
             },
         );
     }

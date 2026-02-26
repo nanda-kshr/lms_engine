@@ -32,7 +32,8 @@ async function bootstrap() {
   );
 
   const port = process.env.PORT ?? 3000;
-  await app.listen(port);
-  logger.log(`Application running on port ${port}`);
+  const server = await app.listen(port);
+  server.setTimeout(30 * 60 * 1000); // 30 minutes
+  logger.log(`Application running on port ${port} with 60m timeout`);
 }
 bootstrap();

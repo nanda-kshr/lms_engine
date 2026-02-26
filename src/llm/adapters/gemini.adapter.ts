@@ -10,7 +10,7 @@ import type {
 @Injectable()
 export class GeminiAdapter implements LlmProvider {
     private client: GoogleGenAI;
-    private model = 'gemini-2.0-flash';
+
 
     constructor(private readonly configService: ConfigService) {
         const apiKey = this.configService.get<string>('GEMINI_API_KEY');
@@ -32,7 +32,7 @@ export class GeminiAdapter implements LlmProvider {
         }));
 
         const response = await this.client.models.generateContent({
-            model: this.model,
+            model: "gemini-2.5-flash-lite",
             contents,
             config: {
                 systemInstruction: systemMessage?.content,
@@ -50,5 +50,44 @@ export class GeminiAdapter implements LlmProvider {
                 }
                 : undefined,
         };
+    }
+
+    async embed(text: string): Promise<number[]> {
+        const result = await this.client.models.embedContent({
+            model: 'models/gemini-embedding-001',
+            contents: [{ parts: [{ text }] }],
+        });
+        return result.embeddings?.[0]?.values ?? [];
+    }
+
+    async repairJson(brokenJson: string): Promise<any> {
+        try {
+            const response = await this.client.models.generateContent({
+                model: "gemini-2.5-flash-lite",
+                contents: [
+                    {
+                        role: 'user',
+                        parts: [
+                            {
+                                text: `Fix this broken JSON and return ONLY the valid JSON data structure. No explanations.\n\n${brokenJson}`,
+                            },
+                        ],
+                    },
+                ],
+                config: {
+                    temperature: 0.1,
+                    responseMimeType: "application/json",
+                },
+            });
+
+            let fixed = (response.text ?? '').trim();
+            if (fixed.startsWith('```')) {
+                fixed = fixed.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+            }
+            return JSON.parse(fixed);
+        } catch (e) {
+            console.error(`JSON Repair failed in GeminiAdapter: ${e.message}`);
+            return null;
+        }
     }
 }

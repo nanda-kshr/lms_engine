@@ -125,21 +125,24 @@ export class CoursesSeedService implements OnModuleInit {
                 this.logger.log(`Seeded course: ${courseData.name}`);
             }
 
-            // Seed topics for this course
-            for (let i = 0; i < courseData.topics.length; i++) {
-                const topicName = courseData.topics[i];
-                const exists = await this.topicModel.findOne({
-                    name: topicName,
-                    course_id: course._id,
-                });
-
-                if (!exists) {
-                    await this.topicModel.create({
+            if (course) {
+                // Seed topics for this course
+                for (let i = 0; i < courseData.topics.length; i++) {
+                    const topicName = courseData.topics[i];
+                    const exists = await this.topicModel.findOne({
                         name: topicName,
                         course_id: course._id,
-                        order: i + 1,
                     });
-                    this.logger.log(`  Seeded topic: ${topicName}`);
+
+                    if (!exists) {
+                        await this.topicModel.create({
+                            name: topicName,
+                            course_id: course._id,
+                            description: `${topicName} description`,
+                            order: i + 1,
+                        });
+                        this.logger.log(`  Seeded topic: ${topicName} for course ${course.code}`);
+                    }
                 }
             }
         }

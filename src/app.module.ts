@@ -13,6 +13,8 @@ import { CoursesSeedService } from './database/seeds/courses.seed';
 import { Role, RoleSchema } from './schemas/role.schema';
 import { Course, CourseSchema } from './schemas/course.schema';
 import { Topic, TopicSchema } from './schemas/topic.schema';
+import { CoursesModule } from './courses/courses.module';
+import { MaterialsModule } from './materials/materials.module';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { Topic, TopicSchema } from './schemas/topic.schema';
     AuthModule,
     LlmModule.forRoot(),
     QuestionsModule,
+    CoursesModule,
+    MaterialsModule,
     MongooseModule.forFeature([
       { name: Role.name, schema: RoleSchema },
       { name: Course.name, schema: CourseSchema },

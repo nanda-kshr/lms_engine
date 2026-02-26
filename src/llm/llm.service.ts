@@ -15,4 +15,12 @@ export class LlmService {
     async complete(options: LlmCompletionOptions): Promise<LlmCompletionResponse> {
         return this.provider.complete(options);
     }
+
+    async embed(text: string): Promise<number[]> {
+        return this.provider.embed(text);
+    }
+
+    async repairJson(brokenJson: string): Promise<any> {
+        return this.provider.repairJson(brokenJson);
+    }
 }

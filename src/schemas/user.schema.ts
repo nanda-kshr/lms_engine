@@ -24,6 +24,12 @@ export class User {
 
     @Prop({ type: Types.ObjectId, ref: 'Role', required: true })
     role_id: Types.ObjectId;
+
+    @Prop()
+    last_vetted_at?: Date;
+
+    @Prop({ default: 0 })
+    daily_vetted_count: number;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

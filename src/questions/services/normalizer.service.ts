@@ -13,6 +13,8 @@ export interface UploadContext {
     upload_id: string;
     uploaded_by: string;
     uploaded_at: Date;
+    default_course_code?: string;
+    default_topic?: string;
 }
 
 export interface NormalizedQuestion {
@@ -57,8 +59,8 @@ export class NormalizerService {
         templateType: CsvTemplateType,
         context: UploadContext,
     ): NormalizedQuestion {
-        const courseCode = row['course_code']?.trim() || undefined;
-        const topic = row['topic']?.trim() || undefined;
+        const courseCode = row['course_code']?.trim() || context.default_course_code;
+        const topic = row['topic']?.trim() || context.default_topic;
 
         const base: NormalizedQuestion = {
             type: this.mapType(templateType),

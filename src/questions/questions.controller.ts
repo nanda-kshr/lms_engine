@@ -11,10 +11,11 @@ import {
     BadRequestException,
     Req,
     Res,
+    Delete,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -32,6 +33,8 @@ import { DuplicateDetectorService } from './services/duplicate-detector.service'
 import { SemanticAnnotatorService } from './services/semantic-annotator.service';
 import { EmbeddingService } from './services/embedding.service';
 import { VettingService } from './services/vetting.service';
+import { GenerationService } from './services/generation.service';
+import type { GenerationBlueprint } from './services/generation.service';
 import { UploadResponseDto } from './dto/upload-response.dto';
 import { VetQuestionDto } from './dto/vet-question.dto';
 
@@ -54,6 +57,7 @@ export class QuestionsController {
         private readonly semanticAnnotator: SemanticAnnotatorService,
         private readonly embeddingService: EmbeddingService,
         private readonly vettingService: VettingService,
+        private readonly generationService: GenerationService,
     ) { }
 
     @Post('upload')
@@ -85,6 +89,8 @@ export class QuestionsController {
             upload_id: uuidv4(),
             uploaded_by: req.user.userId,
             uploaded_at: new Date(),
+            default_course_code: req.body.course_code,
+            default_topic: req.body.topic,
         };
         const normalizedQuestions = this.normalizer.normalize(
             validRows,
@@ -125,6 +131,66 @@ export class QuestionsController {
         };
     }
 
+    @Get('my-uploads')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @MinRoleLevel(2)
+    async getUserUploads(@Req() req: AuthenticatedRequest) {
+        const userId = req.user.userId;
+        const uploads = await this.questionModel.aggregate([
+            {
+                $match: {
+                    uploaded_by: new Types.ObjectId(userId),
+                },
+            },
+            {
+                $group: {
+                    _id: '$upload_id',
+                    uploaded_at: { $first: '$uploaded_at' },
+                    course_code: { $first: '$course_code' },
+                    topic: { $first: '$topic' },
+                    total_questions: { $sum: 1 },
+                    approved_count: {
+                        $sum: { $cond: [{ $eq: ['$vetting_status', 'approved'] }, 1, 0] },
+                    },
+                    rejected_count: {
+                        $sum: { $cond: [{ $eq: ['$vetting_status', 'rejected'] }, 1, 0] },
+                    },
+                    pending_count: {
+                        $sum: { $cond: [{ $eq: ['$vetting_status', 'pending'] }, 1, 0] },
+                    },
+                },
+            },
+            { $sort: { uploaded_at: -1 } },
+            { $limit: 20 },
+        ]);
+
+        return uploads;
+    }
+
+    @Delete('upload/:uploadId')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @MinRoleLevel(2)
+    async deleteUpload(@Param('uploadId') uploadId: string, @Req() req: AuthenticatedRequest) {
+        const userId = req.user.userId;
+
+        // Check if the upload exists and belongs to the user
+        const questions = await this.questionModel.find({
+            upload_id: uploadId,
+            uploaded_by: new Types.ObjectId(userId),
+        }).limit(1);
+
+        if (questions.length === 0) {
+            throw new BadRequestException('Upload not found or access denied');
+        }
+
+        const result = await this.questionModel.deleteMany({
+            upload_id: uploadId,
+            uploaded_by: new Types.ObjectId(userId),
+        });
+
+        return { deleted_count: result.deletedCount };
+    }
+
     /**
      * Get questions for vetting with optional filters
      */
@@ -132,6 +198,7 @@ export class QuestionsController {
     @UseGuards(JwtAuthGuard, RolesGuard)
     @MinRoleLevel(2) // Teacher and above
     async getQuestionsForVetting(
+        @Req() req: AuthenticatedRequest,
         @Query('vetting_status') vettingStatus?: VettingStatus,
         @Query('course_code') courseCode?: string,
         @Query('topic') topic?: string,
@@ -153,7 +220,8 @@ export class QuestionsController {
 
         return this.vettingService.getQuestionsForVetting(
             filters,
-            parseInt(limit || '20', 10),
+            req.user.userId,
+            parseInt(limit || '10', 10),
             parseInt(skip || '0', 10),
         );
     }
@@ -184,5 +252,16 @@ export class QuestionsController {
                 console.error('Async job failed:', error);
             }
         });
+    }
+
+    // ── Question Paper Generation ──────────────────────
+    @Post('generate')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @MinRoleLevel(2) // Teacher and above
+    async generatePaper(
+        @Body() blueprint: GenerationBlueprint,
+        @Req() req: AuthenticatedRequest,
+    ) {
+        return this.generationService.generatePaper(blueprint, req.user.userId);
     }
 }

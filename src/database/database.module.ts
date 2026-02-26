@@ -12,7 +12,14 @@ import { Connection } from 'mongoose';
         if (!uri) {
           throw new Error('MONGODB_URI environment variable is not defined');
         }
-        return { uri };
+        console.log('Connecting to MongoDB URI:', uri.replace(/:([^:@]+)@/, ':****@'));
+        return {
+          uri,
+          serverSelectionTimeoutMS: 5000,
+          socketTimeoutMS: 45000,
+          family: 4,
+          maxPoolSize: 10,
+        };
       },
       inject: [ConfigService],
     }),
@@ -21,7 +28,7 @@ import { Connection } from 'mongoose';
 export class DatabaseModule implements OnModuleInit {
   private readonly logger = new Logger(DatabaseModule.name);
 
-  constructor(@InjectConnection() private readonly connection: Connection) {}
+  constructor(@InjectConnection() private readonly connection: Connection) { }
 
   onModuleInit() {
     this.connection.on('connected', () => {

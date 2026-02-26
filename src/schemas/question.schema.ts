@@ -135,6 +135,13 @@ export class Question {
     @Prop()
     topic?: string;
 
+    // Citations from RAG
+    @Prop()
+    reference_material?: string;
+
+    @Prop()
+    reference_page?: string;
+
     // Upload metadata
     @Prop({ required: true })
     upload_id: string;

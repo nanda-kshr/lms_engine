@@ -19,6 +19,8 @@ export interface LlmCompletionResponse {
 
 export interface LlmProvider {
     complete(options: LlmCompletionOptions): Promise<LlmCompletionResponse>;
+    embed(text: string): Promise<number[]>;
+    repairJson(brokenJson: string): Promise<any>;
 }
 
 export const LLM_PROVIDER = Symbol('LLM_PROVIDER');
