@@ -27,7 +27,6 @@ export class OllamaAdapter implements LlmProvider {
 
         const startTime = Date.now();
         try {
-            console.log(prompt);
             const response = await fetch(`${this.baseUrl}/api/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

@@ -15,6 +15,7 @@ import { Course, CourseSchema } from './schemas/course.schema';
 import { Topic, TopicSchema } from './schemas/topic.schema';
 import { CoursesModule } from './courses/courses.module';
 import { MaterialsModule } from './materials/materials.module';
+import { RubricsModule } from './rubrics/rubrics.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { MaterialsModule } from './materials/materials.module';
     QuestionsModule,
     CoursesModule,
     MaterialsModule,
+    RubricsModule,
     MongooseModule.forFeature([
       { name: Role.name, schema: RoleSchema },
       { name: Course.name, schema: CourseSchema },

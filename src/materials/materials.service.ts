@@ -59,34 +59,33 @@ export class MaterialsService {
             let text = '';
             let chunks: string[] = [];
             let concepts: string[] = [];
+            let pageChunks: { text: string, metadata: string }[] = [];
 
             if (material.mime_type === 'application/pdf') {
                 const { PDFParse } = require('pdf-parse');
 
-                // Custom page render to inject page boundaries
-                function render_page(pageData: any) {
-                    return pageData.getTextContent().then(function (textContent: any) {
-                        let lastY, text = '';
-                        for (let item of textContent.items) {
-                            if (lastY == item.transform[5] || !lastY) {
-                                text += item.str;
-                            }
-                            else {
-                                text += '\n' + item.str;
-                            }
-                            lastY = item.transform[5];
-                        }
-                        // Add our custom marker at the end of each page
-                        return text + `\n_-_PAGE_BOUNDARY_${pageData.pageIndex}_-_\n`;
-                    });
-                }
-
-                const parser = new PDFParse({ data: buffer, pagerender: render_page });
+                const parser = new PDFParse({ data: buffer });
                 const data = await parser.getText();
-                text = data.text;
-                // Basic cleanup
-                text = text.replace(/\n\s*\n/g, '\n').trim();
-                this.logger.log(`Extracted text length: ${text.length}`);
+                text = data.text || '';
+                this.logger.log(`Extracted text length: ${text.length}, pages: ${data.pages?.length || 0}`);
+
+                // pdf-parse v2 returns data.pages as { text, num }[]
+                // Iterate pages directly to get accurate page numbers
+                if (data.pages && data.pages.length > 0) {
+                    for (const page of data.pages) {
+                        const pageText = (page.text || '').replace(/\n\s*\n/g, '\n').trim();
+                        if (pageText.length > 50) {
+                            const subChunks = this.chunkText(pageText, 1000);
+                            for (const sc of subChunks) {
+                                pageChunks.push({
+                                    text: sc,
+                                    metadata: `Material: ${material.original_name}, Page: ${page.num}`
+                                });
+                            }
+                        }
+                    }
+                    this.logger.log(`Created ${pageChunks.length} page chunks from ${data.pages.length} PDF pages`);
+                }
             } else if (material.mime_type === 'text/csv' || material.mime_type === 'application/vnd.ms-excel') {
                 // CSV Parsing is mainly for Syllabus, but can be generic text
                 text = buffer.toString('utf-8');
@@ -94,47 +93,16 @@ export class MaterialsService {
                 text = buffer.toString('utf-8');
             }
 
-            // 2. Parse based on Type AND EXTRACT PAGE CHUNKS
-            let pageChunks: { text: string, metadata: string }[] = [];
+            // 2. Parse based on Type
 
             if (material.type === MaterialType.SYLLABUS) {
                 concepts = await this.extractConceptsFromSyllabus(text, material.mime_type);
             }
 
-            // Break by page boundaries if they exist
-            if (text.includes('_-_PAGE_BOUNDARY_')) {
-                const rawPages = text.split('_-_PAGE_BOUNDARY_');
-                for (let i = 0; i < rawPages.length; i++) {
-                    const pageContent = rawPages[i];
-
-                    // Extract the page number from the trailing marker (it looks like "0_-_" or just the content if it's the very first split before index 0)
-                    // The split consumed '_-_PAGE_BOUNDARY_', so the string starts with the page number then '_-_' 
-                    const markerMatch = pageContent.match(/^(\d+)_-_/);
-                    let actualText = pageContent;
-                    let pageNumStr = 'unknown';
-
-                    if (markerMatch) {
-                        pageNumStr = (parseInt(markerMatch[1], 10) + 1).toString(); // Make 1-indexed
-                        actualText = pageContent.substring(markerMatch[0].length).trim();
-                    } else if (i === 0) {
-                        // First chunk of text before the first boundary is page 1 (or part of it)
-                        pageNumStr = "1";
-                    }
-
-                    actualText = actualText.trim();
-                    if (actualText.length > 50) { // Ignore tiny empty pages
-                        const subChunks = this.chunkText(actualText, material.type === MaterialType.SYLLABUS ? 1000 : 1000);
-                        for (const sc of subChunks) {
-                            pageChunks.push({
-                                text: sc,
-                                metadata: `Material: ${material.original_name}, Page: ${pageNumStr}`
-                            });
-                        }
-                    }
-                }
-            } else {
-                // No page boundaries (CSV/Text)
-                const subChunks = this.chunkText(text, material.type === MaterialType.SYLLABUS ? 1000 : 1000);
+            // If PDF pages already created chunks above, skip this
+            // Otherwise handle non-PDF files (CSV/Text)
+            if (pageChunks.length === 0 && text.length > 0) {
+                const subChunks = this.chunkText(text, 1000);
                 for (const sc of subChunks) {
                     pageChunks.push({
                         text: sc,
@@ -170,7 +138,7 @@ export class MaterialsService {
             // 4. Update Material Status
             material.is_processed = true;
             await material.save();
-            this.logger.log(`Material ${material._id} processed successfully. Created ${chunks.length} chunks.`);
+            this.logger.log(`Material ${material._id} processed successfully. Created ${pageChunks.length} chunks.`);
 
         } catch (error) {
             this.logger.error(`Failed to process material: ${error.message}`);

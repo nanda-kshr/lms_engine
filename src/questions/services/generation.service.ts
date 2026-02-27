@@ -21,6 +21,7 @@ export interface GenerationBlueprint {
     co_distribution: Record<string, number>;   // e.g. { CO2: 4, CO4: 5, CO1: 1 }
     lo_distribution: Record<string, number>;   // e.g. { LO1: 2, LO2: 3 }
     difficulty_distribution: Record<string, number>; // e.g. { Hard: 4, Medium: 3, Easy: 3 }
+    question_style?: string; // 'Analytical' | 'Theory' | 'Hybrid'
 }
 
 interface TaggedQuestion {
@@ -265,10 +266,16 @@ export class GenerationService {
         if (topics.length === 0) {
             // Fetch topics from course
             const courseTopics = await this.coursesService.getTopics(blueprint.course_code);
-            topics = courseTopics.map(t => t.name);
-            if (topics.length === 0) {
+            const availableTopics = courseTopics.map(t => t.name);
+
+            if (availableTopics.length === 0) {
                 // Fallback if no topics found
                 topics = ['General'];
+            } else {
+                for (let i = 0; i < totalNeeded; i++) {
+                    const randomTopic = availableTopics[Math.floor(Math.random() * availableTopics.length)];
+                    topics.push(randomTopic);
+                }
             }
         }
         this.logger.log(`RAG Generation using topics: ${topics.join(', ')}`);
@@ -331,195 +338,205 @@ export class GenerationService {
             const topicStartTime = Date.now();
             this.logger.log(`Generating ${topicSlots.length} questions for topic: ${topic}`);
 
-            // A. Context Retrieval
-            let contextStr = '';
+            // A. Context Retrieval Pool
+            let poolChunks: any[] = [];
             const contextStartTime = Date.now();
             try {
                 // Embed topic + course code for context
                 const embedding = await this.embeddingService.generateEmbeddingSync(`Course: ${blueprint.course_code}. Topic: ${topic}`);
                 if (embedding) {
-                    const chunks = await this.materialsService.findSimilarChunks(embedding, blueprint.course_code, 3);
-                    contextStr = chunks.map((c, i) => `[METADATA: ${c.metadata || 'Unknown'}]\nContext ${i + 1}: ${c.text.substring(0, 500)}...`).join('\n\n');
+                    poolChunks = await this.materialsService.findSimilarChunks(embedding, blueprint.course_code, 15);
                 }
             } catch (e) {
                 this.logger.warn(`Context retrieval failed for ${topic}: ${e.message}`);
-                contextStr = 'No specific context available.';
             }
-            this.logger.log(`[Timer] Context Retrieval for '${topic}' took ${Date.now() - contextStartTime}ms`);
+            this.logger.log(`[Timer] Context Pool Retrieval for '${topic}' took ${Date.now() - contextStartTime}ms`);
 
-            // B. Construct Prompt for Batch
-            const prompt = `
-Generate ${topicSlots.length} questions for Course "${blueprint.course_code}", Topic "${topic}".
+            // B. Iterative Generation
+            for (let i = 0; i < topicSlots.length; i++) {
+                const slot = topicSlots[i];
 
-CONTEXT FROM MATERIALS:
+                let contextStr = 'No specific context available.';
+                let refMaterial = 'Unknown Material';
+                let refPage = 'N/A';
+
+                // Slice a window of 3 chunks for this specific question iteration
+                if (poolChunks.length > 0) {
+                    const safeOffset = (i * 2) % Math.max(1, poolChunks.length - 2);
+                    const iterationChunks = poolChunks.slice(safeOffset, safeOffset + 3);
+
+                    const uniqueMaterials = new Set<string>();
+                    const uniquePages = new Set<string>();
+
+                    contextStr = iterationChunks.map((c, idx) => {
+                        let materialName = 'Unknown Material';
+                        let pageNumber = 'N/A';
+
+                        if (typeof c.metadata === 'string') {
+                            const matMatch = c.metadata.match(/Material:\s*([^,]+)/i);
+                            const pageMatch = c.metadata.match(/Page:\s*(\d+|unknown)/i);
+                            if (matMatch && matMatch[1]) materialName = matMatch[1].trim();
+                            if (pageMatch && pageMatch[1]) pageNumber = pageMatch[1].trim();
+                        } else if (c.metadata && typeof c.metadata === 'object') {
+                            const metaObj: any = c.metadata;
+                            materialName = metaObj.source || metaObj.material || materialName;
+                            pageNumber = metaObj.loc?.pageNumber || metaObj.page || pageNumber;
+                        }
+
+                        this.logger.debug(`[Metadata Debug] Chunk ${idx}: raw='${c.metadata}' => material='${materialName}', page='${pageNumber}'`);
+
+                        if (materialName !== 'Unknown Material') uniqueMaterials.add(materialName);
+                        if (pageNumber !== 'N/A' && pageNumber !== 'unknown') uniquePages.add(String(pageNumber));
+
+                        // Clean chunk text: strip figure/chapter/page references so LLM doesn't parrot them
+                        let cleanText = c.text.substring(0, 500);
+                        cleanText = cleanText.replace(/\b(fig(ure)?|chapter|page|table|diagram|illustration|exhibit|appendix)\s*[\d.:]+\b/gi, '');
+                        cleanText = cleanText.replace(/\bas (shown|depicted|illustrated|seen|given) (in|on|at|above|below)\b/gi, '');
+                        cleanText = cleanText.replace(/\brefer(ring)?\s*(to)?\s*(fig|figure|page|chapter|table|diagram)/gi, '');
+
+                        return cleanText.trim();
+                    }).join('\n\n');
+
+                    refMaterial = Array.from(uniqueMaterials).join(', ') || 'Unknown Material';
+                    refPage = Array.from(uniquePages).join(', ') || 'N/A';
+                }
+
+                const questionStyle = blueprint.question_style || 'Analytical';
+                this.logger.log(`[Prompt] Style=${questionStyle}, Difficulty=${slot.difficulty}, Topic=${topic}`);
+
+                const styleInstruction = questionStyle === 'Theory'
+                    ? 'The question MUST be purely theoretical — test definitions, concepts, or explanations. Do NOT include any calculations or numerical problems.'
+                    : questionStyle === 'Hybrid'
+                        ? 'The question MUST combine theory with a small analytical component — e.g., explain a concept then apply it to a given scenario.'
+                        : 'The question MUST be analytical/numerical — it MUST require the student to perform a calculation, trace an algorithm, solve a recurrence, or analyze code output. Do NOT ask "what is" or definition-based questions.';
+
+                const diffInstruction = slot.difficulty === 'Hard'
+                    ? 'Make it GATE exam level — multi-step reasoning or tricky edge cases.'
+                    : slot.difficulty === 'Easy'
+                        ? 'Keep it basic recall or straightforward application.'
+                        : 'Moderate difficulty requiring understanding and application.';
+
+                const prompt = `Generate 1 MCQ on "${topic}". Do NOT reference any source material, page, figure, chapter, or diagram.
+${styleInstruction}
+${diffInstruction}
+
+KNOWLEDGE:
 ${contextStr}
 
-REQUIREMENTS:
-${topicSlots.map((slot, i) =>
-                `Q${i + 1}: CO=${slot.co}, Difficulty=${slot.difficulty}, Marks=${blueprint.marks}, LOs=[${slot.los.join(', ')}]`
-            ).join('\n')}
-
-STRICT JSON OUTPUT RULES:
-1. Return ONLY a single valid JSON array of objects.
-2. \`correct_answer\` MUST be exactly one of: "A", "B", "C", or "D". Do NOT use numbers (1) or full text.
-3. \`LO_list\` MUST be an array of strings, e.g., ["LO1", "LO2"]. Do NOT return objects like [{"Level": 1}].
-4. \`CO_map\` must be an object like {"CO1": 1}.
-5. \`type\` must be "MCQ".
-6. Ensure EVERY question has a \`correct_answer\` field corresponding to an option key.
-7. Include \`reference_material\` (the original material name) and \`reference_page\` (the page number) based ONLY on the metadata tags found in the CONTEXT FROM MATERIALS blocks above.
-
-EXAMPLE JSON FORMAT:
-[
-  {
-    "question_text": "Question text?",
-    "type": "MCQ",
-    "options": { "a": "Option 1", "b": "Option 2", "c": "Option 3", "d": "Option 4" },
-    "correct_answer": "A",
-    "marks": ${blueprint.marks},
-    "difficulty": "Medium",
-    "CO_map": { "CO1": 1 },
-    "LO_list": ["LO1"],
-    "reference_material": "Textbook.pdf",
-    "reference_page": "42"
-  }
-]
+Return ONLY a single JSON object:
+{"question_text":"...","type":"MCQ","options":{"a":"...","b":"...","c":"...","d":"..."},"correct_answer":"A|B|C|D","marks":${blueprint.marks},"difficulty":"${slot.difficulty}","CO_map":{"${slot.co}":1},"LO_list":["${slot.los[0] || 'LO1'}"]}
 `;
-            // C. Call LLM
-            try {
-                const llmStartTime = Date.now();
-                const response = await this.llmService.complete({
-                    messages: [{ role: 'user', content: prompt }],
-                    temperature: 0.7,
-                });
-                this.logger.log(`[Timer] LLM generation call for '${topic}' took ${Date.now() - llmStartTime}ms`);
-
-                // D. Parse & Save
-                // Reuse existing repair/parsing logic from previous implementation
-                // We'll just copy the parsing block or refactor it into a helper.
-                // For now, I'll inline the parsing logic to be safe.
-
-                let cleaned = (response.content || '').trim();
-                if (cleaned.startsWith('```')) {
-                    cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-                }
-
-                let parsed: any[];
+                // C. Call LLM
                 try {
-                    parsed = JSON.parse(cleaned);
-                } catch (e) {
-                    this.logger.warn(`Initial JSON parsing failed, invoking repair via LLM...`);
-                    const repairStartTime = Date.now();
-                    parsed = await this.llmService.repairJson(cleaned);
-                    this.logger.log(`[Timer] LLM JSON Repair took ${Date.now() - repairStartTime}ms`);
-                }
+                    const llmStartTime = Date.now();
+                    const response = await this.llmService.complete({
+                        messages: [{ role: 'user', content: prompt }],
+                        temperature: 0.7,
+                    });
+                    this.logger.log(`[Timer] LLM generation call for '${topic}' Q${i + 1} took ${Date.now() - llmStartTime}ms`);
 
-                if (Array.isArray(parsed)) {
-                    const uploadId = `AI-${Date.now()}`;
-                    const toSave = parsed.map((q: any, i) => {
-                        // Log the raw question for debugging
-                        this.logger.debug(`Raw generated question: ${JSON.stringify(q)}`);
+                    // D. Parse & Save
+                    let cleaned = (response.content || '').trim();
+                    if (cleaned.startsWith('```')) {
+                        cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+                    }
 
-                        // Normalize options to lowercase keys (a, b, c, d)
-                        const options = q.options || {};
-                        const normalizedOptions: Record<string, string> = {};
+                    let parsed: any;
+                    try {
+                        parsed = JSON.parse(cleaned);
+                    } catch (e) {
+                        this.logger.warn(`Initial JSON parsing failed for Q${i + 1}, invoking repair via LLM...`);
+                        const repairStartTime = Date.now();
+                        parsed = await this.llmService.repairJson(cleaned);
+                        this.logger.log(`[Timer] LLM JSON Repair took ${Date.now() - repairStartTime}ms`);
+                    }
 
-                        if (Array.isArray(options)) {
-                            // Handle array options ['A', 'B', 'C', 'D']
-                            const keys = ['a', 'b', 'c', 'd'];
-                            options.forEach((val, idx) => {
-                                if (idx < 4) normalizedOptions[keys[idx]] = String(val);
-                            });
-                        } else {
-                            // Handle object options
-                            Object.keys(options).forEach(k => {
-                                const val = options[k];
-                                const lowerK = k.toLowerCase().trim();
-                                // Map numeric keys 1-4 to a-d
-                                if (['1', '2', '3', '4'].includes(k)) {
-                                    const map: any = { '1': 'a', '2': 'b', '3': 'c', '4': 'd' };
-                                    normalizedOptions[map[k]] = val;
-                                } else if (['a', 'b', 'c', 'd'].includes(lowerK)) {
-                                    normalizedOptions[lowerK] = val;
-                                }
-                            });
-                        }
+                    // Format as array for mapping logic
+                    const parsedArray = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
 
-                        // Robust handling for correct_answer
-                        let ans = String(q.correct_answer || '').trim();
+                    if (parsedArray.length > 0) {
+                        const uploadId = `AI-${Date.now()}`;
+                        const toSave = parsedArray.map((q: any) => {
+                            this.logger.debug(`Raw generated question: ${JSON.stringify(q)}`);
 
-                        // 1. Handle numeric answers (1->A, 2->B, etc) commonly returned by LLMs
-                        if (/^[1-4]$/.test(ans)) {
-                            const numMap: any = { '1': 'A', '2': 'B', '3': 'C', '4': 'D' };
-                            ans = numMap[ans];
-                        }
+                            const options: any = q.options || {};
+                            const normalizedOptions: Record<string, string> = {};
 
-                        // Ensure answer is uppercase (A, B, C, D) for storage consistency
-                        // But wait, if options are keyed a,b,c,d, the answer referencing them should probably allow case-insensitive match
-                        // The frontend usually expects uppercase Correct Answer but the option keys to be a/b/c/d?
-                        // Let's check the Question model in frontend. 
-                        // It stores correct_answer as string. The UI implementation checks:
-                        // question.correctAnswer?.toUpperCase() == key.toUpperCase()
-                        // So format of correct_answer doesn't strictly matter as long as it is A/B/C/D.
-
-                        ans = ans.toUpperCase();
-
-                        // If ans is not A/B/C/D, try to find the key by value match
-                        if (!['A', 'B', 'C', 'D'].includes(ans)) {
-                            // value match against normalized options
-                            // normalized keys are a,b,c,d
-                            const key = Object.keys(normalizedOptions).find(k => normalizedOptions[k] === q.correct_answer || normalizedOptions[k] === ans);
-                            if (key) ans = key.toUpperCase();
-                        }
-
-                        // Last resort: if still invalid, log and default to 'A'
-                        if (!['A', 'B', 'C', 'D'].includes(ans)) {
-                            this.logger.warn(`Invalid correct_answer '${q.correct_answer}' for Q: ${q.question_text?.substring(0, 20)}... Defaulting to 'A'.`);
-                            ans = 'A';
-                        }
-
-                        // Ensure we have options if it is MCQ
-                        if (Object.keys(normalizedOptions).length === 0 && q.type === 'MCQ') {
-                            // Fallback: try to pull keys blindly if normalization failed
-                            if (!Array.isArray(options)) {
-                                const keys = Object.keys(options);
-                                const targetKeys = ['a', 'b', 'c', 'd'];
-                                keys.slice(0, 4).forEach((k, i) => {
-                                    normalizedOptions[targetKeys[i]] = options[k];
+                            if (Array.isArray(options)) {
+                                const keys = ['a', 'b', 'c', 'd'];
+                                options.forEach((val, idx) => {
+                                    if (idx < 4) normalizedOptions[keys[idx]] = String(val);
+                                });
+                            } else {
+                                Object.keys(options).forEach(k => {
+                                    const val = options[k];
+                                    const lowerK = k.toLowerCase().trim();
+                                    if (['1', '2', '3', '4'].includes(k)) {
+                                        const map: any = { '1': 'a', '2': 'b', '3': 'c', '4': 'd' };
+                                        normalizedOptions[map[k]] = val;
+                                    } else if (['a', 'b', 'c', 'd'].includes(lowerK)) {
+                                        normalizedOptions[lowerK] = val;
+                                    }
                                 });
                             }
-                        }
 
-                        return {
-                            ...q,
-                            options: normalizedOptions,
-                            correct_answer: ans,
-                            source: 'AI',
-                            vetting_status: VettingStatus.PENDING,
-                            weight: 1.0,
-                            course_code: blueprint.course_code,
-                            topic: topic, // Tag with specific topic
-                            // Add references
-                            reference_material: q.reference_material || '',
-                            reference_page: String(q.reference_page || ''),
-                            // Ensuring fields match schema
-                            marks: blueprint.marks,
-                            uploaded_by: userId,
-                            uploaded_at: new Date(),
-                            upload_id: uploadId,
-                            CO_map: q.CO_map || { [topicSlots[i]?.co || 'CO1']: 1 }, // Fallback to slot CO
-                            difficulty: q.difficulty || topicSlots[i]?.difficulty || 'Medium',
-                        }
-                    });
+                            if (Object.keys(normalizedOptions).length === 0 && q.type === 'MCQ') {
+                                if (!Array.isArray(options)) {
+                                    const keys = Object.keys(options);
+                                    const targetKeys = ['a', 'b', 'c', 'd'];
+                                    keys.slice(0, 4).forEach((k, idx) => {
+                                        normalizedOptions[targetKeys[idx]] = options[k];
+                                    });
+                                }
+                            }
 
-                    const dbSaveStartTime = Date.now();
-                    const saved = await this.questionModel.insertMany(toSave);
-                    this.logger.log(`[Timer] Database saving ${toSave.length} questions took ${Date.now() - dbSaveStartTime}ms`);
+                            let ans = String(q.correct_answer || '').trim();
+                            if (/^[1-4]$/.test(ans)) {
+                                const numMap: any = { '1': 'A', '2': 'B', '3': 'C', '4': 'D' };
+                                ans = numMap[ans];
+                            }
+                            ans = ans.toUpperCase();
 
-                    generatedQuestions.push(...(saved as unknown as QuestionDocument[]));
+                            if (!['A', 'B', 'C', 'D'].includes(ans)) {
+                                const key = Object.keys(normalizedOptions).find(k => normalizedOptions[k] === q.correct_answer || normalizedOptions[k] === ans);
+                                if (key) ans = key.toUpperCase();
+                            }
+
+                            if (!['A', 'B', 'C', 'D'].includes(ans)) {
+                                this.logger.warn(`Invalid correct_answer '${q.correct_answer}' for Q: ${q.question_text?.substring(0, 20)}... Defaulting to 'A'.`);
+                                ans = 'A';
+                            }
+
+                            return {
+                                ...q,
+                                options: normalizedOptions,
+                                correct_answer: ans,
+                                source: 'AI',
+                                vetting_status: VettingStatus.PENDING,
+                                weight: 1.0,
+                                course_code: blueprint.course_code,
+                                topic: topic,
+                                reference_material: q.reference_material || refMaterial,
+                                reference_page: String(q.reference_page || refPage),
+                                marks: blueprint.marks,
+                                uploaded_by: userId,
+                                uploaded_at: new Date(),
+                                upload_id: uploadId,
+                                CO_map: (q.CO_map && Object.keys(q.CO_map).length > 0) ? q.CO_map : { [slot.co || 'CO1']: 1 },
+                                LO_list: (q.LO_list && Array.isArray(q.LO_list) && q.LO_list.length > 0) ? q.LO_list : (slot.los.length > 0 ? [slot.los[0]] : ['LO1']),
+                                difficulty: q.difficulty || slot.difficulty || 'Medium',
+                            }
+                        });
+
+                        const dbSaveStartTime = Date.now();
+                        const saved = await this.questionModel.insertMany(toSave);
+                        this.logger.log(`[Timer] Database saving ${toSave.length} question took ${Date.now() - dbSaveStartTime}ms`);
+
+                        generatedQuestions.push(...(saved as unknown as QuestionDocument[]));
+                    }
+                } catch (err) {
+                    this.logger.error(`Failed to generate question ${i + 1} for ${topic}: ${err.message}`);
                 }
-
-            } catch (err) {
-                this.logger.error(`Failed to generate batch for ${topic}: ${err.message}`);
             }
             this.logger.log(`[Timer] Total Topic Batch processing for '${topic}' took ${Date.now() - topicStartTime}ms`);
         }
